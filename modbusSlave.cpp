@@ -60,7 +60,7 @@ word modbusSlave::getBaud(void)
 Generates the crc for the current message in the buffer.
 */
 
-void modbusSlave::calcCrc(void)
+void modbusSlave::calcCrc(byte *msg, int len)
 {
 	byte	CRCHi = 0xFF,
 			CRCLo = 0x0FF,
@@ -68,8 +68,8 @@ void modbusSlave::calcCrc(void)
 			msgLen,
 			*msgPtr;
 
-	msgLen = _len-2;
-	msgPtr = _msg;
+	msgLen = len-2;
+	msgPtr = msg;
 
 	while(msgLen--)
 	{
@@ -205,7 +205,7 @@ void modbusSlave::getDigitalStatus(byte funcType, word startreg, word numregs)
 	}
 	
 	//generate the crc for the query reply and append it
-	this->calcCrc();
+	this->calcCrc(_rspMsg,_rspLen);
 	_rspMsg[_rspLen - 2] = _crc >> 8;
 	_rspMsg[_rspLen - 1] = _crc & 0xFF;
 }
@@ -252,7 +252,7 @@ void modbusSlave::getAnalogStatus(byte funcType, word startreg, word numregs)
 	}
 
 	//generate the crc for the query reply and append it
-	this->calcCrc();
+	this->calcCrc(_rspMsg,_rspLen);
 	_rspMsg[_rspLen - 2] = _crc >> 8;
 	_rspMsg[_rspLen - 1] = _crc & 0xFF;
 }
@@ -295,7 +295,7 @@ void modbusSlave::setStatus(byte funcType, word reg, word val)
 	_rspMsg[5] = val & 0xFF;
 
 	//calculate the crc for the query reply and append it.
-	this->calcCrc();
+	this->calcCrc(_rspMsg,_rspLen);
 	_rspMsg[_rspLen - 2]= _crc >> 8;
 	_rspMsg[_rspLen - 1]= _crc & 0xFF;
 }
@@ -329,7 +329,7 @@ void modbusSlave::setStatus2(byte funcType, word reg, word val)
 	_rspMsg[5] = val & 0xFF;
 
 	//calculate the crc for the query reply and append it.
-	this->calcCrc();
+	this->calcCrc(_rspMsg,_rspLen);
 	_rspMsg[_rspLen - 2]= _crc >> 8;
 	_rspMsg[_rspLen - 1]= _crc & 0xFF;
 }
@@ -368,7 +368,7 @@ bool modbusSlave::run(void)
 	}
 
 	//calculate the checksum of the query message minus the checksum it came with.
-	this->calcCrc();
+	this->calcCrc(_msg,_len);
 
 	//if the checksum does not match, ignore the message
 	if ( _crc != (((word)_msg[_len - 2] << 8) | _msg[_len - 1])){
@@ -432,7 +432,8 @@ bool modbusSlave::run(void)
 		this->setStatus2(funcType, field1, field2);
 		break;	
 	default:
-		return;
+		errno = ERROR_UNKNOWN_FUNCTION;
+		return false;
 		break;
 	}
 

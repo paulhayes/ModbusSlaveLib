@@ -63,7 +63,7 @@ class modbusSlave
 		modbusSlave(void);
 		void setBaud(HardwareSerial*,word,unsigned char,unsigned char=255);
 		word getBaud(void);
-		void calcCrc(void);
+		void calcCrc(byte msg[], int len);
 		void checkSerial(void);
 		void serialRx(void);
 		void getDigitalStatus(byte, word, word);
@@ -86,6 +86,7 @@ class modbusSlave
 		const byte ERROR_BAD_CRC = 2;
 		const byte ERROR_SHORT_DATA = 3;
 		const byte ERROR_TOO_MANY_REGISTERS = 4;
+		const byte ERROR_UNKNOWN_FUNCTION = 5;
 
 		word _baud; 
 		//longest possible frame delay
