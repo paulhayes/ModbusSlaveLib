@@ -1,0 +1,10 @@
+{
+    "name":"ModbusSlaveLib",
+    "version":"0.1.0",
+    "description":"Slave Modbus RTU Library for Arduino compatibles. Original beta code written by Jason Vreeland @CodeRage Released 3/7/2010 under GNU license",
+    "license": "GNU",
+    "homepage": "https://github.com/paulhayes/ModbusSlaveLib",
+    "frameworks": "arduino",
+    "platforms": "*"
+
+}
