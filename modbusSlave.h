@@ -8,6 +8,10 @@
 #include <modbusDevice.h>
 //#include <Wprogram.h>
 
+//limited due to hardware serial 
+#define maxwriteregs 32 
+#define maxbuffer 64
+
 /* Table of CRC values for high�order byte */
 const byte _auchCRCHi[] = {
 				0x00, 0xC1, 0x81, 0x40, 0x01, 0xC0, 0x80, 0x41, 0x01, 0xC0, 0x80, 0x41, 0x00, 0xC1, 0x81,
@@ -50,8 +54,11 @@ const byte _auchCRCLo[] = {
 				0x44, 0x84, 0x85, 0x45, 0x87, 0x47, 0x46, 0x86, 0x82, 0x42, 0x43, 0x83, 0x41, 0x81, 0x80,
 				0x40};
 
+
+
 class modbusSlave
 {
+	
 	public:
 		modbusSlave(void);
 		void setBaud(HardwareSerial*,word,unsigned char,unsigned char=255);
@@ -63,16 +70,25 @@ class modbusSlave
 		void getAnalogStatus(byte, word, word);
 		void setStatus(byte, word, word);
 		void setStatus2(byte, word, word);
-		void run(void);
+		bool run(void);
 
 		modbusDevice *_device;
 
 		word _crc;
-		byte *_msg,
-			  _len;	
-		private:
+		byte _msg[maxbuffer],
+			_rspMsg[maxbuffer],
+			_len,
+			_rspLen;
 
-		word _baud,
-			 _frameDelay;
+		byte errno = 0;
+
+		private:
+		const byte ERROR_BAD_CRC = 2;
+		const byte ERROR_SHORT_DATA = 3;
+		const byte ERROR_TOO_MANY_REGISTERS = 4;
+
+		word _baud; 
+		//longest possible frame delay
+		
 };
 #endif

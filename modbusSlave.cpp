@@ -5,7 +5,8 @@
 
 unsigned char TxEnablePin;
 HardwareSerial* ModbusPort;
-#define maxwriteregs 100
+
+
 
 modbusSlave::modbusSlave()
 {
@@ -19,7 +20,6 @@ void modbusSlave::setBaud(HardwareSerial* SerialPort, word baud,unsigned char by
 {
 	_baud = baud;
 	//calculate the time perdiod for 3 characters for the given bps in ms.
-	_frameDelay = 24000/_baud;
 
 	ModbusPort = SerialPort;
 	
@@ -41,7 +41,7 @@ void modbusSlave::setBaud(HardwareSerial* SerialPort, word baud,unsigned char by
 
 	(*ModbusPort).flush();
 	
-  TxEnablePin = _TxEnablePin;	
+  TxEnablePin = _TxEnablePin;
   if(TxEnablePin!=255){
 	pinMode(TxEnablePin, OUTPUT);
 	digitalWrite(TxEnablePin, LOW);
@@ -109,15 +109,23 @@ void modbusSlave::calcCrc(void)
 */
 void modbusSlave::checkSerial(void)
 {
+	HardwareSerial &serial  = (*ModbusPort);
 	//while there is more data in the UART than when last checked
-	while((*ModbusPort).available()> _len)
+	while(serial.available()> _len)
 	{
 		//update the incoming query message length
-		_len = (*ModbusPort).available();
+		_len = serial.available();
 		//Wait for 3 bytewidths of data (SOM/EOM)
-//		delayMicroseconds(RTUFRAMETIME);
-		delay(_frameDelay);
+		_delay_us(24000000L/2400L);
 		//Check the UART again
+	}
+	if(_len>0 && _len<8){
+		//something has gone wrong, clear the buffer and abort
+		while(serial.available()){
+			serial.read();
+		}
+		_len = 0;
+		errno = ERROR_SHORT_DATA;
 	}
 }
 
@@ -126,14 +134,24 @@ Copies the contents of the UART to a buffer
 */
 void modbusSlave::serialRx(void)
 {
-	byte i;
-
+	HardwareSerial &serial  = (*ModbusPort);
+	
 	//allocate memory for the incoming query message
-	_msg = (byte*) malloc(_len);
+	//_msg = (byte*) malloc(_len);
 
-		//copy the query byte for byte to the new buffer
-		for (i=0 ; i < _len ; i++)
-			_msg[i] = (*ModbusPort).read();
+	//copy the query byte for byte to the new buffer
+	
+	int recvLen = _len;
+	_len = 8;
+	for (byte i=0 ; i < _len ; i++){
+		_msg[i] = serial.read();
+		if((i==6) && (_msg[1]==15 || _msg[1]==16)){
+			_len = 9+_msg[6];
+			if(recvLen<_len){
+				_len = recvLen;
+			}	
+		}
+	}
 }
 
 /*
@@ -153,23 +171,23 @@ void modbusSlave::getDigitalStatus(byte funcType, word startreg, word numregs)
 
 	//determine the message length
 	//for each group of 8 registers the message length increases by 1
-	_len = numregs/8;
+	_rspLen = numregs/8;
 	//if there is at least one incomplete byte's worth of data
 	//then add 1 to the message length for the partial byte.
 	if(numregs%8)
-		_len++;
+		_rspLen++;
 	//allow room for the Device ID byte, Function type byte, data byte count byte, and crc word
-	_len +=5;
+	_rspLen +=5;
 
 	//allocate memory of the appropriate size for the message
-	_msg = (byte *) malloc(_len);
+	//_rspMsg = (byte *) malloc(_rspLen);
 
 	//write the slave device ID
-	_msg[0] = _device->getId();
+	_rspMsg[0] = _device->getId();
 	//write the function type
-	_msg[1] = funcType;
+	_rspMsg[1] = funcType;
 	//set the data byte count
-	_msg[2] = _len-5;
+	_rspMsg[2] = _rspLen-5;
 
 	//For the quantity of registers queried
 	while(numregs--)
@@ -177,9 +195,9 @@ void modbusSlave::getDigitalStatus(byte funcType, word startreg, word numregs)
 		//if a value is found for the current register, set bit number bitn of msg[3]
 		//else clear it
 		if(_device->get(startreg))
-			bitSet(_msg[3], bitn);
+			bitSet(_rspMsg[3], bitn);
 		else
-			bitClear(_msg[3], bitn);
+			bitClear(_rspMsg[3], bitn);
 		//increment the bit index
 		bitn++;
 		//increment the register
@@ -188,8 +206,8 @@ void modbusSlave::getDigitalStatus(byte funcType, word startreg, word numregs)
 	
 	//generate the crc for the query reply and append it
 	this->calcCrc();
-	_msg[_len - 2] = _crc >> 8;
-	_msg[_len - 1] = _crc & 0xFF;
+	_rspMsg[_rspLen - 2] = _crc >> 8;
+	_rspMsg[_rspLen - 1] = _crc & 0xFF;
 }
 
 void modbusSlave::getAnalogStatus(byte funcType, word startreg, word numregs)
@@ -206,19 +224,19 @@ void modbusSlave::getAnalogStatus(byte funcType, word startreg, word numregs)
 
 	//calculate the query reply message length
 	//for each register queried add 2 bytes
-	_len = numregs * 2;
+	_rspLen = numregs * 2;
 	//allow room for the Device ID byte, Function type byte, data byte count byte, and crc word
-	_len += 5;
+	_rspLen += 5;
 
 	//allocate memory for the query response
-	_msg = (byte *) malloc(_len);
+	//_rspMsg = (byte *) malloc(_rspLen);
 
 	//write the device ID
-	_msg[0] = _device->getId();
+	_rspMsg[0] = _device->getId();
 	//write the function type
-	_msg[1] = funcType;
+	_rspMsg[1] = funcType;
 	//set the data byte count
-	_msg[2] = _len - 5;
+	_rspMsg[2] = _rspLen - 5;
 
 	//for each register queried
 	while(numregs--)
@@ -226,37 +244,37 @@ void modbusSlave::getAnalogStatus(byte funcType, word startreg, word numregs)
 		//retrieve the value from the register bank for the current register
 		val = _device->get(startreg+i);
 		//write the high byte of the register value
-		_msg[3 + i * 2]  = val >> 8;
+		_rspMsg[3 + i * 2]  = val >> 8;
 		//write the low byte of the register value
-		_msg[4 + i * 2] = val & 0xFF;
+		_rspMsg[4 + i * 2] = val & 0xFF;
 		//increment the register
 		i++;
 	}
 
 	//generate the crc for the query reply and append it
 	this->calcCrc();
-	_msg[_len - 2] = _crc >> 8;
-	_msg[_len - 1] = _crc & 0xFF;
+	_rspMsg[_rspLen - 2] = _crc >> 8;
+	_rspMsg[_rspLen - 1] = _crc & 0xFF;
 }
 
 void modbusSlave::setStatus(byte funcType, word reg, word val)
 {
 	//Set the query response message length
 	//Device ID byte, Function byte, Register byte, Value byte, CRC word
-	_len = 8;
+	_rspLen = 8;
 	//allocate memory for the message buffer.
-	_msg = (byte *) malloc(_len);
+	//_rspMsg = (byte *) malloc(_rspLen);
 
 
 	//write the device ID
-	_msg[0] = _device->getId();
+	_rspMsg[0] = _device->getId();
 	//if the function type is a digital write
 	if(funcType == WRITE_DO)
 	{
 		//Add 1 to the register value and set it's value to val
 		_device->set(reg + 1, val);
 		//write the function type to the response message
-		_msg[1] = WRITE_DO;
+		_rspMsg[1] = WRITE_DO;
 	}
 	else
 	{
@@ -264,70 +282,67 @@ void modbusSlave::setStatus(byte funcType, word reg, word val)
 		_device->set(reg + 40001, val);
 
 		//write the function type of the response message
-		_msg[1] = WRITE_AO;
+		_rspMsg[1] = WRITE_AO;
 	}
 	
 	//write the register number high byte value
-	_msg[2] = reg >> 8;
+	_rspMsg[2] = reg >> 8;
 	//write the register number low byte value
-	_msg[3] = reg & 0xFF;
+	_rspMsg[3] = reg & 0xFF;
 	//write the control value's high byte
-	_msg[4] = val >> 8;
+	_rspMsg[4] = val >> 8;
 	//write the control value's low byte
-	_msg[5] = val & 0xFF;
+	_rspMsg[5] = val & 0xFF;
 
 	//calculate the crc for the query reply and append it.
 	this->calcCrc();
-	_msg[_len - 2]= _crc >> 8;
-	_msg[_len - 1]= _crc & 0xFF;
+	_rspMsg[_rspLen - 2]= _crc >> 8;
+	_rspMsg[_rspLen - 1]= _crc & 0xFF;
 }
 
 void modbusSlave::setStatus2(byte funcType, word reg, word val)
 {
 	//Set the query response message length
 	//Device ID byte, Function byte, Register byte, Value byte, CRC word
-	_len = 8;
+	_rspLen = 8;
 	//allocate memory for the message buffer.
-	_msg = (byte *) malloc(_len);
+	//_rspMsg = (byte *) malloc(_rspLen);
 
 
 	//write the device ID
-	_msg[0] = _device->getId();
+	_rspMsg[0] = _device->getId();
 	//if the function type is a digital write
 	if(funcType == WRITE_MULTIAO)
 	{
-		_msg[1] = WRITE_MULTIAO;
+		_rspMsg[1] = WRITE_MULTIAO;
 	}else{
 		return;
 	}
 	
 	//write the register number high byte value
-	_msg[2] = reg >> 8;
+	_rspMsg[2] = reg >> 8;
 	//write the register number low byte value
-	_msg[3] = reg & 0xFF;
+	_rspMsg[3] = reg & 0xFF;
 	//write the control value's high byte
-	_msg[4] = val >> 8;
+	_rspMsg[4] = val >> 8;
 	//write the control value's low byte
-	_msg[5] = val & 0xFF;
+	_rspMsg[5] = val & 0xFF;
 
 	//calculate the crc for the query reply and append it.
 	this->calcCrc();
-	_msg[_len - 2]= _crc >> 8;
-	_msg[_len - 1]= _crc & 0xFF;
+	_rspMsg[_rspLen - 2]= _crc >> 8;
+	_rspMsg[_rspLen - 1]= _crc & 0xFF;
 }
 
-void modbusSlave::run(void)
+bool modbusSlave::run(void)
 {
-
+	this->errno=0;
 	byte deviceId;
 	byte funcType;
 	word field1;
 	word field2;
 	byte bytecount;
 	word field3;
-	
-	
-	int i;
 	
 	//initialize mesasge length
 	_len = 0;
@@ -338,14 +353,9 @@ void modbusSlave::run(void)
 	//if there is nothing in the recieve buffer, bail.
 	if(_len == 0)
 	{
-		return;
+		return false;
 	}
-	/*
-	digitalWrite(8,HIGH);
-	delay(50);
-	digitalWrite(8,LOW);
-	delay(50);
-	*/
+
 	//retrieve the query message from the serial uart
 	this->serialRx();
 	
@@ -354,28 +364,19 @@ void modbusSlave::run(void)
 	if( (_msg[0] != 0xFF) && 
 		(_msg[0] != _device->getId()) )
 	{
-		return;
+		return false;
 	}
 
-	/*
-	digitalWrite(8,HIGH);
-	delay(50);
-	digitalWrite(8,LOW);
-	delay(50);
-	*/
 	//calculate the checksum of the query message minus the checksum it came with.
 	this->calcCrc();
 
 	//if the checksum does not match, ignore the message
-	if ( _crc != (((word)_msg[_len - 2] << 8) | _msg[_len - 1]))
+	if ( _crc != (((word)_msg[_len - 2] << 8) | _msg[_len - 1])){
+		errno = modbusSlave::ERROR_BAD_CRC;
 		return;
+	}
 	
-	/*
-	digitalWrite(8,HIGH);
-	delay(50);
-	digitalWrite(8,LOW);
-	delay(50);
-	*/
+
 	//copy the function type from the incoming query
 	funcType = _msg[1];
 
@@ -390,20 +391,21 @@ void modbusSlave::run(void)
 		if(field2<maxwriteregs){
 			bytecount =	_msg[6];
 			int st = 0;
-			 for(int i=0; i<field2; i++){
+			 for(uint8_t i=0; i<field2; i++){
 				 field3 = (_msg[7+st] << 8) | _msg[8+st];
 				_device->set(field1 + 40001 + i, field3);
-				st+=2;
+				st+=2;				
 			}			
 		}else{
-			return;
+			errno = ERROR_TOO_MANY_REGISTERS;
+			return false;
 		}
 	}
 	
 	//free the allocated memory for the query message
-	free(_msg);
+	//free(_msg);
 	//reset the message length;
-	_len = 0;
+	_rspLen = 0;
 
 	//generate query response based on function type
 	switch(funcType)
@@ -435,7 +437,7 @@ void modbusSlave::run(void)
 	}
 
 	//if a reply was generated
-	if(_len)
+	if(_rspLen)
 	{
 		int i;
 		//send the reply to the serial UART
@@ -444,15 +446,17 @@ void modbusSlave::run(void)
 			digitalWrite(TxEnablePin, HIGH);
 		}
 		
-		for(i = 0 ; i < _len ; i++)
-			(*ModbusPort).write(_msg[i]);
+		for(i = 0 ; i < _rspLen ; i++)
+			(*ModbusPort).write(_rspMsg[i]);
 		//free the allocated memory for the reply message
-		free(_msg);		
-		delay(_len*2);
+		//free(_msg);		
+		
 		//reset the message length		
-		_len = 0;		
+		_rspLen = 0;		
 		if(TxEnablePin!=255){
 			digitalWrite(TxEnablePin, LOW);		
 		}	
 	}
+
+	return true;
 }
