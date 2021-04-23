@@ -116,7 +116,7 @@ void modbusSlave::checkSerial(void)
 		//update the incoming query message length
 		_len = serial.available();
 		//Wait for 3 bytewidths of data (SOM/EOM)
-		_delay_us(24000000L/2400L);
+		_delay_us(24000000L/9600L);
 		//Check the UART again
 	}
 	if(_len>0 && _len<8){
